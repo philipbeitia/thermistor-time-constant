@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 400" width="700" height="400" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect width="700" height="400" fill="#ffffff"/>
+  <text x="20" y="28" font-size="16" font-weight="bold" fill="#222">Thermistor voltage divider — schematic (IEC symbols)</text>
+
+  <!-- ===== supply node ===== -->
+  <circle cx="160" cy="80" r="4" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="120" y="68" fill="#222">+5 V</text>
+  <line x1="164" y1="80" x2="360" y2="80" stroke="#222" stroke-width="2"/>
+  <line x1="160" y1="84" x2="160" y2="100" stroke="#222" stroke-width="2"/>
+
+  <!-- ===== R1 (IEC rectangle) ===== -->
+  <rect x="150" y="100" width="20" height="60" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="182" y="124" fill="#222" font-weight="bold">R1</text>
+  <text x="182" y="142" fill="#222">10 kΩ (fixed)</text>
+  <line x1="160" y1="160" x2="160" y2="220" stroke="#222" stroke-width="2"/>
+
+  <!-- ===== node to A0 ===== -->
+  <circle cx="160" cy="190" r="4" fill="#222"/>
+  <line x1="160" y1="190" x2="360" y2="190" stroke="#222" stroke-width="2"/>
+  <text x="172" y="182" fill="#555" font-size="12">V(A0) = 5 V · R_T / (R1 + R_T)</text>
+
+  <!-- ===== R_T thermistor (IEC: rectangle + diagonal + -t°) ===== -->
+  <rect x="150" y="220" width="20" height="60" fill="#fff" stroke="#222" stroke-width="2"/>
+  <line x1="138" y1="292" x2="182" y2="208" stroke="#222" stroke-width="2"/>
+  <line x1="138" y1="292" x2="152" y2="292" stroke="#222" stroke-width="2"/>
+  <text x="124" y="312" fill="#222" font-size="12">−t°</text>
+  <text x="182" y="244" fill="#222" font-weight="bold">R_T</text>
+  <text x="182" y="262" fill="#222">NTC thermistor (ring-lug probe)</text>
+  <text x="182" y="278" fill="#222" font-size="12">10 kΩ at 25 °C, B ≈ 3950 K</text>
+  <line x1="160" y1="280" x2="160" y2="310" stroke="#222" stroke-width="2"/>
+
+  <!-- ===== ground node ===== -->
+  <circle cx="160" cy="310" r="4" fill="#222"/>
+  <line x1="160" y1="310" x2="360" y2="310" stroke="#222" stroke-width="2"/>
+  <line x1="160" y1="310" x2="160" y2="335" stroke="#222" stroke-width="2"/>
+  <line x1="140" y1="335" x2="180" y2="335" stroke="#222" stroke-width="2"/>
+  <line x1="147" y1="342" x2="173" y2="342" stroke="#222" stroke-width="2"/>
+  <line x1="154" y1="349" x2="166" y2="349" stroke="#222" stroke-width="2"/>
+  <text x="188" y="350" fill="#222" font-size="12">0 V</text>
+
+  <!-- ===== Arduino block ===== -->
+  <rect x="360" y="50" width="240" height="300" rx="6" fill="#f3f6fa" stroke="#222" stroke-width="2"/>
+  <text x="480" y="78" text-anchor="middle" font-weight="bold" fill="#222" font-size="15">Arduino Uno</text>
+  <text x="480" y="96" text-anchor="middle" fill="#555" font-size="12">ATmega328P · 10-bit ADC · 0 – 1023</text>
+  <!-- pin stubs -->
+  <rect x="352" y="72" width="16" height="16" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="378" y="84" fill="#222">5V</text>
+  <rect x="352" y="182" width="16" height="16" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="378" y="194" fill="#222">A0</text>
+  <rect x="352" y="302" width="16" height="16" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="378" y="314" fill="#222">GND</text>
+
+  <!-- what the board does -->
+  <text x="480" y="124" text-anchor="middle" fill="#222" font-size="12">analogRead(A0) every 20 ms</text>
+  <text x="480" y="142" text-anchor="middle" fill="#222" font-size="12">ADC → R_T → °C (Beta equation)</text>
+  <text x="480" y="160" text-anchor="middle" fill="#222" font-size="12">prints one CSV line per sample:</text>
+  <text x="480" y="178" text-anchor="middle" fill="#222" font-size="12" font-family="Menlo, Consolas, monospace">time_ms,raw_adc,temperature_C</text>
+
+  <!-- USB out -->
+  <line x1="600" y1="200" x2="640" y2="200" stroke="#222" stroke-width="2"/>
+  <rect x="640" y="190" width="14" height="20" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="604" y="232" fill="#555" font-size="12">USB → laptop</text>
+  <text x="604" y="248" fill="#555" font-size="12">115200 baud</text>
+
+  <!-- footnote -->
+  <text x="20" y="384" fill="#555" font-size="12">R_T = R1 · ADC / (1023 − ADC) — the 5 V cancels because both halves of the divider share it (ratiometric).</text>
+</svg>

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thermistor logger</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1c1c1c; --muted:#6b6b6b; --line:#dcdcd8; --accent:#1f77b4; --red:#d62728; --green:#2a9d5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px 16px; background:var(--bg); color:var(--ink); font:15px/1.45 -apple-system, Segoe UI, Helvetica, Arial, sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  button { font:inherit; padding:10px 16px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.stop { background:var(--red); border-color:var(--red); color:#fff; }
+  button.go { background:var(--green); border-color:var(--green); color:#fff; }
+  input { font:inherit; padding:9px 10px; border:1px solid var(--line); border-radius:8px; width:150px; }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:3px; }
+  .field { display:flex; flex-direction:column; }
+  #status { color:var(--muted); font-size:14px; min-height:20px; margin-top:8px; }
+  .big { display:flex; gap:28px; flex-wrap:wrap; }
+  .big .v { font-size:40px; font-weight:600; letter-spacing:-.5px; }
+  .big .k { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+  canvas { width:100%; height:260px; display:block; background:#fff; border-radius:8px; }
+  .steps { font-size:14px; color:var(--muted); margin:0; padding-left:18px; }
+  .steps li { margin:3px 0; }
+  .warn { background:#fff6e5; border:1px solid #f1d7a6; color:#6b4b00; padding:10px 12px; border-radius:8px; font-size:14px; }
+  #unsupported { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Thermistor logger</h1>
+  <p class="sub">Records what the Arduino prints and saves it as a CSV. Works in Chrome or Edge on a laptop.</p>
+
+  <div id="unsupported" class="card warn">This browser can't talk to USB devices. Open this file in <b>Google Chrome</b> or <b>Microsoft Edge</b> (not Safari, not Firefox, not a phone).</div>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnConnect" class="primary">1 · Connect to Arduino</button>
+      <button id="btnStart" class="go" disabled>2 · Start run</button>
+      <button id="btnStop" class="stop" disabled>3 · Stop</button>
+      <button id="btnDownload" disabled>4 · Download CSV</button>
+      <button id="btnCopy" disabled>Copy CSV</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="field"><label>file name</label><input id="fname" value="bare_run1"></div>
+      <div class="field"><label>reference thermometer (°C)</label><input id="refC" placeholder="e.g. 40.3"></div>
+      <div class="field"><label>notes (optional)</label><input id="notes" placeholder="stirred, 3 cm deep" style="width:260px"></div>
+    </div>
+    <div id="status">Not connected. Close the Arduino Serial Monitor first — only one program can use the port.</div>
+  </div>
+
+  <div class="card">
+    <div class="big">
+      <div><div class="v" id="tNow">—</div><div class="k">temperature °C</div></div>
+      <div><div class="v" id="tElapsed">0.0</div><div class="k">seconds since start</div></div>
+      <div><div class="v" id="nSamples">0</div><div class="k">samples</div></div>
+    </div>
+    <canvas id="chart" width="1600" height="520"></canvas>
+  </div>
+
+  <div class="card">
+    <ol class="steps">
+      <li><b>Connect</b> — pick the Arduino in the pop-up (it's the only "Arduino"/"USB Serial" entry). The board resets; numbers start arriving.</li>
+      <li>Sensor in air, hands off. Type the file name (bare_run1 … sleeved_run3).</li>
+      <li><b>Start run</b> — wait ~15 s for a flat line, then read the thermometer, type it in, and plunge the bead.</li>
+      <li>Wait until the curve is flat (~20 s bare, longer sleeved). <b>Stop</b>, then <b>Download CSV</b>. Repeat for the next run.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const btnConnect = $('btnConnect'), btnStart = $('btnStart'), btnStop = $('btnStop'),
+        btnDownload = $('btnDownload'), btnCopy = $('btnCopy'), status = $('status');
+  const canvas = $('chart'), ctx = canvas.getContext('2d');
+
+  if (!('serial' in navigator)) {
+    $('unsupported').style.display = 'block';
+    btnConnect.disabled = true;
+  }
+
+  let port = null, reader = null, keepReading = false, lineBuf = '';
+  let recording = false, rows = [], header = 'time_ms,raw_adc,temperature_C', tStartMs = null, lastTemp = null;
+
+  const setStatus = (msg) => { status.textContent = msg; };
+
+  // ---------- serial ----------
+  btnConnect.onclick = async () => {
+    try {
+      if (port) { await disconnect(); return; }
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      const decoder = new TextDecoderStream();
+      port.readable.pipeTo(decoder.writable).catch(() => {});
+      reader = decoder.readable.getReader();
+      keepReading = true;
+      btnConnect.textContent = 'Disconnect';
+      btnStart.disabled = false;
+      setStatus('Connected. Numbers arriving. Put the sensor in air, then press Start run.');
+      readLoop();
+    } catch (e) {
+      setStatus('Could not open the port: ' + e.message + '  (Is the Arduino Serial Monitor still open?)');
+      port = null;
+    }
+  };
+
+  async function disconnect() {
+    keepReading = false;
+    try { await reader.cancel(); } catch (e) {}
+    try { await port.close(); } catch (e) {}
+    port = null; reader = null;
+    btnConnect.textContent = '1 · Connect to Arduino';
+    btnStart.disabled = true; btnStop.disabled = true;
+    setStatus('Disconnected.');
+  }
+
+  async function readLoop() {
+    try {
+      while (keepReading) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        lineBuf += value;
+        let i;
+        while ((i = lineBuf.indexOf('\n')) >= 0) {
+          const line = lineBuf.slice(0, i).trim();
+          lineBuf = lineBuf.slice(i + 1);
+          if (line) handleLine(line);
+        }
+      }
+    } catch (e) {
+      setStatus('Connection lost: ' + e.message);
+      await disconnect();
+    }
+  }
+
+  function handleLine(line) {
+    if (line.startsWith('time_ms')) { header = line; return; }   // header printed by the sketch at reset
+    const parts = line.split(',');
+    if (parts.length !== 3) return;                                  // half a line after connect, or garbage
+    const t = Number(parts[0]), T = Number(parts[2]);
+    if (!Number.isFinite(t)) return;
+    lastTemp = Number.isFinite(T) ? T : null;
+    $('tNow').textContent = lastTemp === null ? 'open?' : lastTemp.toFixed(2);
+    if (!recording) return;
+    if (tStartMs === null) tStartMs = t;
+    rows.push({ line, t: (t - tStartMs) / 1000, T });
+    $('tElapsed').textContent = rows[rows.length - 1].t.toFixed(1);
+    $('nSamples').textContent = rows.length;
+    if (rows.length % 2 === 0) draw();
+  }
+
+  // ---------- run control ----------
+  btnStart.onclick = () => {
+    rows = []; tStartMs = null; recording = true;
+    btnStart.disabled = true; btnStop.disabled = false; btnDownload.disabled = true; btnCopy.disabled = true;
+    setStatus('Recording. Keep the sensor in air ~15 s, then read the thermometer and plunge.');
+    draw();
+  };
+
+  btnStop.onclick = () => {
+    recording = false;
+    btnStop.disabled = true; btnStart.disabled = false;
+    btnDownload.disabled = rows.length === 0; btnCopy.disabled = rows.length === 0;
+    setStatus(`Stopped: ${rows.length} samples over ${rows.length ? rows[rows.length - 1].t.toFixed(1) : 0} s. Download the CSV, then change the file name for the next run.`);
+    draw();
+  };
+
+  function csvText() {
+    const ref = $('refC').value.trim(), notes = $('notes').value.trim();
+    const meta = [
+      `# file: ${$('fname').value.trim() || 'run'}.csv`,
+      `# recorded: ${new Date().toISOString()}`,
+      `# reference_thermometer_C: ${ref || 'not recorded'}`,
+      `# sample_period_ms: ${rows.length > 1 ? Math.round(1000 * (rows[rows.length - 1].t - rows[0].t) / (rows.length - 1)) : '?'}`,
+      notes ? `# notes: ${notes}` : null,
+    ].filter(Boolean);
+    return meta.join('\n') + '\n' + header + '\n' + rows.map(r => r.line).join('\n') + '\n';
+  }
+
+  btnDownload.onclick = () => {
+    const name = ($('fname').value.trim() || 'run') + '.csv';
+    const blob = new Blob([csvText()], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    setStatus(`Saved ${name} (${rows.length} samples). Check your Downloads folder.`);
+  };
+
+  btnCopy.onclick = async () => {
+    try { await navigator.clipboard.writeText(csvText()); setStatus('CSV copied to clipboard — paste it into the chat.'); }
+    catch (e) { setStatus('Copy failed: ' + e.message); }
+  };
+
+  // ---------- chart ----------
+  function draw() {
+    const W = canvas.width, H = canvas.height, L = 90, R = 30, Tp = 30, B = 60;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    const pts = rows.filter(r => Number.isFinite(r.T));
+    if (pts.length < 2) {
+      ctx.fillStyle = '#999'; ctx.font = '28px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(recording ? 'recording…' : 'press Start run', W / 2, H / 2);
+      return;
+    }
+    const tMax = Math.max(pts[pts.length - 1].t, 5);
+    let yMin = Math.min(...pts.map(p => p.T)), yMax = Math.max(...pts.map(p => p.T));
+    const pad = Math.max(0.5, (yMax - yMin) * 0.08); yMin -= pad; yMax += pad;
+    const X = t => L + (W - L - R) * t / tMax, Y = T => Tp + (H - Tp - B) * (1 - (T - yMin) / (yMax - yMin));
+
+    ctx.strokeStyle = '#e4e4e0'; ctx.lineWidth = 2; ctx.fillStyle = '#777'; ctx.font = '22px sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let k = 0; k <= 4; k++) {
+      const T = yMin + (yMax - yMin) * k / 4, y = Y(T);
+      ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
+      ctx.fillText(T.toFixed(1), L - 10, y);
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const step = tMax > 60 ? 10 : tMax > 20 ? 5 : 1;
+    for (let t = 0; t <= tMax; t += step) {
+      const x = X(t);
+      ctx.beginPath(); ctx.moveTo(x, Tp); ctx.lineTo(x, H - B); ctx.stroke();
+      ctx.fillText(t + ' s', x, H - B + 10);
+    }
+    ctx.fillStyle = '#444'; ctx.font = '20px sans-serif';
+    ctx.save(); ctx.translate(26, (Tp + H - B) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('°C', 0, 0); ctx.restore();
+
+    ctx.strokeStyle = '#1f77b4'; ctx.lineWidth = 3; ctx.beginPath();
+    pts.forEach((p, i) => { const x = X(p.t), y = Y(p.T); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  }
+  draw();
+})();
+</script>
+</body>
+</html>
